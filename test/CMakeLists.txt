@@ -24,6 +24,7 @@ target_compile_definitions(instruction_test2 PRIVATE
         ARMULET_FEATURE_ARMV8M_BASELINE_MSPLIM=1
         ARMULET_FEATURE_ARMV8M_BASELINE=1
         VARMULET_USE_EARLY_INSTR_READ=0 # get two extra tests this way - todo revisit if we test access faults
+        VARMULET_NULL_IS_READ_ONLY=1
         $<$<BOOL:${PICO_RISCV}>:ARMULET_USE_ASM=1>
         EARLY_READ=0
         )

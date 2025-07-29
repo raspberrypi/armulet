@@ -250,9 +250,13 @@
 1:
 .endm
 
-.macro check_splim value, temp
+.macro store_sp_check_splim value, temp
 #if ARMULET_FEATURE_ARMV8M_BASELINE_MSPLIM
     lw          \temp, CPU_OFFSET_SPLIM(r_cpu)
+#endif
+    // (scheduled here to avoid load-branch stall)
+    sw          \value, CPU_OFFSET_SP(r_cpu)
+#if ARMULET_FEATURE_ARMV8M_BASELINE_MSPLIM
 #if 1
     bltu        \value, \temp, vexecute_dummy_bkpt
 #else
@@ -262,24 +266,6 @@
 6:
 #endif
 #endif
-
-.endm
-.macro w_lo_hi_value_sp_pc reg, value, temp1, temp2
-    sh2add      \temp1, \reg, r_cpu
-    addi        \temp2, \reg, -13
-    bltz        \temp2, 8f
-    beqz        \temp2, 7f
-    addi        \temp2, \temp2, -2
-    bnez        \temp2, 8f
-    andi        r_pc, \value, ~1
-    j           9f
-7:
-    andi        \value, \value, ~3
-    sw          \value, (\temp1)
-    check_splim \value, \temp2
-8:
-    sw          \value, (\temp1)
-9:
 .endm
 
 .macro get_va_imm5_ra_rb out, a, b, imm

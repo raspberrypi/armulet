@@ -27,6 +27,12 @@
 #define VARMULET_USE_EARLY_INSTR_READ 1
 #endif
 
+// Assume that address 0 can be written to without side effects (e.g. ROM on RP2350)
+#ifndef VARMULET_NULL_IS_READ_ONLY
+#define VARMULET_NULL_IS_READ_ONLY 0
+#endif
+
+
 #define CPU_OFFSET_R0          (0 * 4)
 #define CPU_OFFSET_R1          (1 * 4)
 #define CPU_OFFSET_R2          (2 * 4)

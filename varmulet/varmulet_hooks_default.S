@@ -28,9 +28,21 @@
 .word   \name
 .endm
 
-code_label_with_section varmulet_halt
+code_label_with_section varmulet_hook_default_exc_return
+#if ARMULET_FEATURE_CALL
+    li          r_tmp0, ARMULET_CALL_RETURN_ADDRESS
+    beq         r_tmp0, r_work0, varmulet_do_call_return
+#endif
+    // fall thru
+
+varmulet_halt:
     ebreak
     j           varmulet_halt
+
+#if ARMULET_FEATURE_CALL
+varmulet_do_call_return:
+    tail_call_asm_hook_trash_tmp2_work1 VASM_HOOKS_INDEX_CALL_RETURN
+#endif
 
 .section .rodata.varmulet_default_asm_hooks
 .p2align 2
@@ -353,17 +365,4 @@ code_label_with_section varmulet_hook_default_call_return
     lw          r_tmp0, (sp)
     addi        sp, sp, 4
     jr          r_tmp0
-#endif
-
-code_label_with_section varmulet_hook_default_exc_return
-#if ARMULET_FEATURE_CALL
-    li          r_tmp0, ARMULET_CALL_RETURN_ADDRESS
-    beq         r_tmp0, r_work0, varmulet_do_call_return
-#endif
-    ebreak
-    next_instruction
-
-#if ARMULET_FEATURE_CALL
-varmulet_do_call_return:
-    tail_call_asm_hook_trash_tmp2_work1 VASM_HOOKS_INDEX_CALL_RETURN
 #endif

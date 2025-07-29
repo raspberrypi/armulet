@@ -303,6 +303,7 @@ vexecute_subs8i: //  0011 1x
     rlo_ptr_10_8 r_work0 // rdn
     lw          r_work2, (r_work0) // work2 = regs[rdn]
     zext.b      r_tmp0, r_inst
+    // this is also entered from vdp_rsbs
 vexecute_subs_common:
     sub_update_flags r_work2, r_tmp0
     store_nz_at_work0_next_instruction
@@ -331,16 +332,9 @@ vexecute_dp: //  0100 00
 // .p2align 2 (uncommon)
 // odd length, tuck it in here
 vdp_rsbs:
-    neg     r_lazy_nz,r_work2
-    seqz    r_c,r_lazy_nz // C is set for 0 result, clear otherwise
-    and     r_topbit_v,r_lazy_nz,r_work2 // V is set for 0x80000000 (only case where both argument and result are negative)
-    j vdp_shared_store_nz_at_work0_next_instruction
-
-.p2align 2
-vdp_ands:
-    // cpu->regs[rdn] &= cpu->regs[rm];
-    and         r_lazy_nz, r_work1, r_work2
-    store_nz_at_work0_next_instruction
+    mv r_tmp0, r_work2
+    li r_work2, 0
+    j vexecute_subs_common
 
 .p2align 2
 vdp_eors:
@@ -348,38 +342,42 @@ vdp_eors:
     xor         r_lazy_nz, r_work1, r_work2
     store_nz_at_work0_next_instruction
 
-// .p2align 2 // the mv is a compressed instruction
+// .p2align 2 // the jal is a compressed instruction
 vdp_lsls:
-    mv          r_lazy_nz,r_work1
-    zext.b      r_tmp0, r_work2 // shift amount
-    li          r_tmp1,32
-    blt         r_tmp0,r_tmp1,v_lsl_entry
+    jal vdp_shift_setup_common
+    beqz        r_tmp1, v_lsl_entry
 v_lsls_over_ret:
-    slti        r_c,r_tmp0,33
-    and         r_c,r_c,r_work1
-    mv          r_lazy_nz,zero
+    li          r_lazy_nz, 0
+    slti        r_c, r_tmp0, 33
+    and         r_c, r_c, r_work1
     j           vdp_shared_store_nz_at_work0_next_instruction
 
-// .p2align 2 // the mv is a compressed instruction
+// .p2align 2 // the jal is a compressed instruction
 vdp_lsrs:
-    mv          r_lazy_nz,r_work1
-    zext.b      r_tmp0, r_work2 // shift amount
-    beqz        r_tmp0,vdp_shared_store_nz_at_work0_next_instruction // zero shift
-    li          r_tmp1,32
-    blt         r_tmp0,r_tmp1,v_lsr_entry
+    jal vdp_shift_setup_common
+    beqz        r_tmp1, v_lsr_entry
     srli        r_work1,r_work1,31
     j           v_lsls_over_ret
 
-// .p2align 2 // the mv is a compressed instruction
+// .p2align 2 // the jal is a compressed instruction
 vdp_asrs:
-    mv          r_lazy_nz,r_work1
-    zext.b      r_work2, r_work2 // shift amount
-    beqz        r_work2,vdp_shared_store_nz_at_work0_next_instruction // zero shift means zero for shift-by-register
-    li          r_tmp1,31
-    ble         r_work2,r_tmp1,1f
-    li          r_work2,0 // a shift by >31 places is the same as a shift by 32, which is done by immediate shift operand of zero
+    jal vdp_shift_setup_common
+    mv r_work2, r_tmp0
+    // a shift by >31 places is the same as a shift by 32, which is done by
+    // immediate shift operand of zero
+    beqz        r_tmp1, 1f
+    li          r_work2, 0
 1:
     j           v_asr_entry
+
+// .p2align 2 // the mv is a compressed instruction
+vdp_shift_setup_common:
+    mv          r_lazy_nz,r_work1
+    zext.b      r_tmp0, r_work2 // shift amount
+    beqz        r_tmp0, vdp_shared_store_nz_at_work0_next_instruction // zero shift means zero for shift-by-register
+    // setup check for < 32
+    srli        r_tmp1, r_tmp0, 5
+    ret
 
 .p2align 2
 vdp_sbcs:
@@ -404,19 +402,10 @@ vdp_adcs:
 
 // .p2align 2 (uncommon)
 vdp_rors:
-    zext.b      r_tmp0, r_work2
-    ror         r_lazy_nz, r_work1, r_tmp0
-    // carry is unchanged if 8-bit shift count is 0:
-    beqz        r_tmp0, 1f
+    jal vdp_shift_setup_common
+    ror         r_lazy_nz, r_lazy_nz, r_tmp0
     srli        r_c, r_lazy_nz, 31
-1:
     j vdp_shared_store_nz_at_work0_next_instruction
-
-// .p2align 2 (uncommon)
-vdp_cmn:
-    addi    r_work0,r_cpu,CPU_OFFSET_LAZY_NZ // set result pointer to safe-to-write-to memory location !!! check
-    mv      r_tmp0, r_work1
-    j       vexecute_adds_common
 
 main_decode_align
 vexecute_cmpi: //  0010 1x
@@ -439,11 +428,21 @@ vdp_cmp:
     sub_update_flags r_work1, r_work2
     next_instruction
 
-// .p2align 2 (uncommon)
+// odd length, start on odd boundary
 vdp_mvns:
     // cpu->regs[rdn] = ~cpu->regs[rm];
-    not         r_lazy_nz, r_work2
-    j vdp_shared_store_nz_at_work0_next_instruction
+    li r_work1, -1
+    // fall through
+.p2align 2
+vdp_bics:
+    // cpu->regs[rdn] &= ~cpu->regs[rm];
+    not r_work2, r_work2
+    // fall through
+.p2align 2
+vdp_ands:
+    // cpu->regs[rdn] &= cpu->regs[rm];
+    and         r_lazy_nz, r_work1, r_work2
+    store_nz_at_work0_next_instruction
 
 .p2align 2
 vdp_orrs:
@@ -453,27 +452,20 @@ vdp_orrs:
 vdp_shared_store_nz_at_work0_next_instruction:
     store_nz_at_work0_next_instruction
 
-.p2align 2
-vdp_bics:
-    // cpu->regs[rdn] &= ~cpu->regs[rm];
-    andn        r_lazy_nz, r_work1, r_work2
-    store_nz_at_work0_next_instruction
-
-
 // === Special data instructions and branch and exchange
 main_decode_align
 vexecute_010001: //  0100 01
-    h3.bextmi   r_tmp0, r_inst, 8, 2
-    addi        r_tmp0, r_tmp0, -3
-    beqz        r_tmp0, vexecute_010001_11
+    h3.bextmi   r_tmp1, r_inst, 8, 2
+    addi        r_tmp1, r_tmp1, -3
+    bexti       r_tmp0, r_inst, 7 // used on both sides of branch
+    // uint32_t rm = (op16 >> 3u) & 0xfu;
+    h3.bextmi   r_work1, r_inst, 3, 4
+    beqz        r_tmp1, vexecute_010001_11
 
 vexecute_add_cmp_mov_hi:
     // uint32_t rdn = (op16 & 0x7u) + ((op16 >> 4u & 0x8u));
-    bexti       r_tmp0, r_inst, 7
     andi        r_tmp1, r_inst, 7
     sh3add      r_work0, r_tmp0, r_tmp1
-    // uint32_t rm = (op16 >> 3u) & 0xfu;
-    h3.bextmi   r_work1, r_inst, 3, 4
 
     // uint32_t vm = get_lo_hi_reg(cpu, rm);
     r_lo_hi_value r_work2, r_work1, r_tmp0, r_tmp1
@@ -504,23 +496,20 @@ vexecute_mov_hi:
 vexecute_010001_11:
     // branch to PC is undefined, so we don't care about getting it right
     // this is an unrolled register read
-    h3.bextmi   r_tmp0, r_inst, 3, 4
-    sh2add      r_tmp0, r_tmp0, r_cpu
-    lw          r_work0, (r_tmp0)
-
-    bexti       r_tmp0, r_inst, 7
+    sh2add      r_tmp1, r_work1, r_cpu
+    lw          r_work0, (r_tmp1)
+    // r_tmp0 initialised to instr[7] earlier:
     bnez        r_tmp0, vexecute_blx
 vexecute_bx:
     check_exc_return_to_work0_trash_tmp2_work1
-    j v_write_pc_work0
-
-// .p2align 2 odd length, unlikely to be in a tight loop
-vexecute_blx:
-    add         r_tmp1, r_pc, 1 // thumb bit
-    sw          r_tmp1, CPU_OFFSET_LR(r_cpu)
 v_write_pc_work0:
     andi        r_pc, r_work0, ~1
     next_instruction
+vexecute_blx:
+    // trash pc as we're about to load it from elsewhere (get 16-bit addi)
+    addi        r_pc, r_pc, 1 // thumb bit
+    sw          r_pc, CPU_OFFSET_LR(r_cpu)
+    j           v_write_pc_work0
 
 // === Load from Literal Pool
 main_decode_align
@@ -702,17 +691,10 @@ vexecute_adr: //  1010 0x
     andi        r_tmp1, r_tmp1, ~3
 vexecute_address_gen:
     rlo_ptr_10_8 r_work0 // rd
-    zext.b      r_tmp0, r_inst
-    sh2add      r_tmp1, r_tmp0, r_tmp1
+    zext.b      r_inst, r_inst
+    sh2add      r_tmp1, r_inst, r_tmp1
     sw          r_tmp1, (r_work0)
     next_instruction
-
-// odd length
-vexecute_ldrh:
-    read_mem_u16_at_work1_to_tmp0
-    sw          r_tmp0, (r_work0)
-    next_instruction
-
 
 // === Miscellaneous 16-bit instructions
 main_decode_align
@@ -736,8 +718,7 @@ vexecute_add_sub_sp:
     sh2add      r_work2, r_tmp0, r_work2
 v_write_sp:
     andi        r_work2, r_work2, ~3
-    sw          r_work2, CPU_OFFSET_SP(r_cpu)
-    check_splim r_work2, r_tmp0
+    store_sp_check_splim r_work2, r_tmp0
     next_instruction
 
 vexecute_extend:
@@ -753,17 +734,24 @@ vexecute_extend:
 
 vexecute_extend_sxtb: // 1
     sext.b      r_work1, r_work1
+    // fall through
 vexecute_extend_sxth: // 0
     sext.h      r_work1, r_work1
     j           vexecute_extend_done
 vexecute_extend_uxtb: // 3 (most common)
     zext.b      r_work1, r_work1
-    j           vexecute_extend_done // this is the commonest one, and this block is otherwise odd length anyway
+    // fall through
 vexecute_extend_uxth: // 2
     zext.h      r_work1, r_work1
 vexecute_extend_done:
     sw          r_work1, (r_work0)
 v_next_instruction_0:
+    next_instruction
+
+// odd length
+vexecute_ldrh:
+    read_mem_u16_at_work1_to_tmp0
+    sw          r_tmp0, (r_work0)
     next_instruction
 
 main_decode_align
@@ -780,8 +768,7 @@ vexecute_push:
     cpop        r_tmp0, r_tmp1
     slli        r_tmp0, r_tmp0, 2
     sub         r_work0, r_work1, r_tmp0
-    sw          r_work0, CPU_OFFSET_SP(r_cpu)
-    check_splim r_work0, r_tmp0
+    store_sp_check_splim r_work0, r_tmp0
     // uint32_t addr = cpu->regs[SP];
     // uint32_t lo_bitmap = op16 & 0xff;
     // while (lo_bitmap) {
@@ -825,6 +812,15 @@ vexecute_push:
 1:
     next_instruction
 #endif
+
+    // __compiler_memory_barrier();
+    // cpu->regs[SP] = addr;
+pop_no_pc:
+    beqz        r_work2,1f
+    sw          r_work1, (r_work2)
+1:
+    next_instruction
+
 
 main_decode_align
 vexecute_101110: //  1011 10
@@ -917,28 +913,6 @@ v_pop_entry:
     andi        r_pc, r_tmp0, ~1
     next_instruction
 
-    // __compiler_memory_barrier();
-    // cpu->regs[SP] = addr;
-pop_no_pc:
-    beqz        r_work2,1f
-    sw          r_work1, (r_work2)
-1:
-    next_instruction
-
-vexecute_dummy_bkpt:
-    // Set r_inst=0xb000 in the handler (often a native ebreak), useful
-    // telltale -- we enter this path on an splim check fail
-    lui r_inst, 0xb
-// should already be aligned, but just make sure:
-main_decode_align
-vexecute_101111_1:
-#if VASM_HOOKS_INDEX_HINT_INSTR != VASM_HOOKS_INDEX_BKPT_INSTR + 1
-#error "Uh oh"
-#endif
-    bexti       r_tmp2, r_inst, 8
-    addi        r_tmp2, r_tmp2, VASM_HOOKS_INDEX_BKPT_INSTR
-    enter_asm_hook_shared_if_smaller
-
 // === Store multiple registers
 main_decode_align
 vexecute_stm: //  1100 0x
@@ -965,7 +939,9 @@ v_stmia_entry:
     addi        r_work1, r_work1, 4
     bnez        r_tmp2, 1b
 2:
+#if !VARMULET_NULL_IS_READ_ONLY
     beqz        r_work2,1f // writeback pointer==0? don't write to it
+#endif
     sw          r_work1, (r_work2)
 1:
     next_instruction
@@ -1026,6 +1002,21 @@ vexecute_ldm: //  1101 0x // ldmia
     next_instruction
 #endif
 
+vexecute_dummy_bkpt:
+    // Set r_inst=0xb000 in the handler (often a native ebreak), useful
+    // telltale -- we enter this path on an splim check fail
+    lui r_inst, 0xb
+// should already be aligned, but just make sure:
+main_decode_align
+vexecute_101111_1:
+#if VASM_HOOKS_INDEX_HINT_INSTR != VASM_HOOKS_INDEX_BKPT_INSTR + 1
+#error "Uh oh"
+#endif
+    bexti       r_tmp2, r_inst, 8
+    addi        r_tmp2, r_tmp2, VASM_HOOKS_INDEX_BKPT_INSTR
+    enter_asm_hook_shared_if_smaller
+
+
 // === Conditional branch, and Supervisor Call
 main_decode_align
 vexecute_1101xx: //  1101 xx
@@ -1066,6 +1057,17 @@ vcb_bxx_no:
     addi        r_pc, r_pc, 2
 1:
     next_instruction
+
+// odd length (if NULL_IS_READ_ONLY), so fill alignment hole
+vdp_cmn:
+    // set result pointer to safe-to-write-to memory location
+#if VARMULET_NULL_IS_READ_ONLY
+    li      r_work0, 0
+#else
+    addi    r_work0,r_cpu,CPU_OFFSET_LAZY_NZ // !!! check
+#endif
+    mv      r_tmp0, r_work1
+    j       vexecute_adds_common
 
 // packed to give aligned entry points for more-common branch types when first
 // instruction is 32-bit -- in particular bvs/bvc are incredibly rare, as is svc

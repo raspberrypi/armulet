@@ -23,7 +23,7 @@
 #include <cstdarg>
 #include <cstring>
 #if __riscv
-#define RAM_START_ADDRESS 0x20010000u
+#define RAM_START_ADDRESS 0x20040000u
 #else
 #define RAM_START_ADDRESS 0x20070000u
 #endif
@@ -5661,7 +5661,7 @@ void armulet_cb_special_write(uint32_t addr, int size, uint32_t value) {
 #endif
 #endif
 int main(int argc, char **argv) {
-#if __riscv
+#if 0 && __riscv
     // Start and end points of the constructor list,
     // defined by the linker script.
     extern void (*__preinit_array_start)(void);
